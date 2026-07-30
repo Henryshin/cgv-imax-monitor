@@ -1,15 +1,15 @@
 name: CGV IMAX Monitor
 
-# 5분마다 실행 (GitHub Actions 최소 간격)
 on:
   schedule:
-    - cron: '*/30 * * * *'  # 30분마다 (월 1,440분 = 무료 범위)
-  # 수동 실행도 가능하게
+    - cron: '*/30 * * * *'  # 30분마다 신규 탐지 (월 1,440분)
+    - cron: '0 0 * * *'     # 매일 09:00 (UTC+9 = KST) 현황 보고
   workflow_dispatch:
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
+    if: github.event.schedule != '0 0 * * *'
 
     steps:
       - name: Checkout code
@@ -27,6 +27,42 @@ jobs:
           SITE_NO: 0013
           SCREEN_KEYWORD: IMAX
         run: node monitor.js
+
+      - name: Upload state file
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: monitor-state
+          path: state.json
+          retention-days: 30
+
+  daily-report:
+    runs-on: ubuntu-latest
+    if: github.event.schedule == '0 0 * * *'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 18
+
+      - name: Download previous state
+        uses: actions/download-artifact@v3
+        with:
+          name: monitor-state
+          path: .
+        continue-on-error: true
+
+      - name: Run daily report
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          SITE_NO: 0013
+          SCREEN_KEYWORD: IMAX
+        run: node monitor.js report
 
       - name: Upload state file
         if: always()

@@ -237,5 +237,81 @@ async function checkAndNotify() {
   }
 }
 
-// 즉시 실행
-checkAndNotify();
+async function dailyReport() {
+  const timestamp = new Date().toLocaleString('ko-KR');
+  console.log(`[${timestamp}] 일일 현황 보고 시작...`);
+
+  try {
+    // 현재 상태 로드
+    const state = loadState();
+    const stateKeys = Object.keys(state);
+
+    if (stateKeys.length === 0) {
+      console.log('보고할 데이터가 없습니다.');
+      return;
+    }
+
+    // API 재조회해서 현재 최신 정보 획득
+    const schedules = await fetchCGVSchedule();
+    const currentSessions = extractIMAXSessions(schedules);
+
+    if (currentSessions.length === 0) {
+      const message = `📋 <b>[CGV 현황 보고] ${new Date().toLocaleDateString('ko-KR')}</b>\n\n현재 오픈 예매: 없음`;
+      await sendTelegramMessage(message);
+      console.log('현황 보고 완료 (오픈 예매 없음)');
+      return;
+    }
+
+    // 날짜별로 정렬
+    const sessionsByDate = {};
+    currentSessions.forEach(session => {
+      if (!sessionsByDate[session.date]) {
+        sessionsByDate[session.date] = [];
+      }
+      sessionsByDate[session.date].push(session);
+    });
+
+    // 메시지 구성
+    let message = `📋 <b>[CGV 현황 보고] ${new Date().toLocaleDateString('ko-KR')}</b>\n`;
+    message += `현재 오픈 예매: ${currentSessions.length}건\n\n`;
+
+    // 날짜순으로 정렬
+    const sortedDates = Object.keys(sessionsByDate).sort();
+
+    sortedDates.slice(0, 7).forEach(date => {
+      message += `<b>${date}</b>\n`;
+      sessionsByDate[date].slice(0, 5).forEach(session => {
+        message += `  ${session.startTime} ${session.movie}\n`;
+        message += `  잔여 ${session.availableSeats}/${session.totalSeats}석\n`;
+      });
+      if (sessionsByDate[date].length > 5) {
+        message += `  ... 외 ${sessionsByDate[date].length - 5}건\n`;
+      }
+      message += '\n';
+    });
+
+    if (sortedDates.length > 7) {
+      message += `... 외 ${sortedDates.length - 7}일`;
+    }
+
+    // 텔레그램 발송
+    try {
+      const result = await sendTelegramMessage(message);
+      console.log(`✓ 현황 보고 완료 (메시지 ID: ${result.messageId})`);
+    } catch (error) {
+      console.error('✗ 텔레그램 발송 오류:', error.message);
+    }
+
+  } catch (error) {
+    console.error('✗ 오류 발생:', error.message);
+  }
+}
+
+// 실행 모드 판별
+const mode = process.argv[2] || 'monitor';
+
+if (mode === 'report') {
+  dailyReport();
+} else {
+  checkAndNotify();
+}
