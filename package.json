@@ -1,0 +1,17 @@
+{
+  "name": "cgv-imax-monitor",
+  "version": "1.0.0",
+  "description": "CGV 용산아이파크몰 IMAX 예매 오픈 모니터링 및 텔레그램 알림",
+  "main": "monitor.js",
+  "scripts": {
+    "start": "node monitor.js",
+    "test": "node test-telegram.js",
+    "setup-scheduler": "powershell -ExecutionPolicy Bypass -File setup_task.ps1"
+  },
+  "keywords": ["cgv", "imax", "reservation", "monitoring", "telegram"],
+  "author": "",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
