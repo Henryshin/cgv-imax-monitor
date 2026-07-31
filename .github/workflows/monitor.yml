@@ -5,18 +5,27 @@ on:
     - cron: '*/30 * * * *'  # 30분마다 신규 탐지 (월 1,440분)
     - cron: '0 0 * * *'     # 매일 09:00 (UTC+9 = KST) 현황 보고
   workflow_dispatch:
+    inputs:
+      mode:
+        description: '실행 모드'
+        type: choice
+        options: [monitor, report]
+        default: monitor
+
+permissions:
+  contents: write
 
 jobs:
   monitor:
     runs-on: ubuntu-latest
-    if: github.event.schedule != '0 0 * * *'
+    if: github.event.schedule != '0 0 * * *' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'monitor')
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: 18
 
@@ -28,33 +37,26 @@ jobs:
           SCREEN_KEYWORD: IMAX
         run: node monitor.js
 
-      - name: Upload state file
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: monitor-state
-          path: state.json
-          retention-days: 30
+      - name: Commit updated state
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state.json
+          git diff --staged --quiet || git commit -m "Update state [skip ci]"
+          git push
 
   daily-report:
     runs-on: ubuntu-latest
-    if: github.event.schedule == '0 0 * * *'
+    if: github.event.schedule == '0 0 * * *' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'report')
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: 18
-
-      - name: Download previous state
-        uses: actions/download-artifact@v3
-        with:
-          name: monitor-state
-          path: .
-        continue-on-error: true
 
       - name: Run daily report
         env:
@@ -63,11 +65,3 @@ jobs:
           SITE_NO: 0013
           SCREEN_KEYWORD: IMAX
         run: node monitor.js report
-
-      - name: Upload state file
-        if: always()
-        uses: actions/upload-artifact@v3
-        with:
-          name: monitor-state
-          path: state.json
-          retention-days: 30

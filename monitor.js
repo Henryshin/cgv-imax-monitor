@@ -128,13 +128,19 @@ function sendTelegramMessage(message) {
       return;
     }
 
+    const body = JSON.stringify({
+      chat_id: CHAT_ID,
+      text: message,
+      parse_mode: 'HTML'
+    });
+
     const options = {
       hostname: 'api.telegram.org',
       path: `/bot${BOT_TOKEN}/sendMessage`,
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        'Content-Length': Buffer.byteLength(message)
+        'Content-Length': Buffer.byteLength(body)
       }
     };
 
@@ -161,11 +167,7 @@ function sendTelegramMessage(message) {
 
     req.on('error', reject);
     req.setTimeout(10000);
-    req.write(JSON.stringify({
-      chat_id: CHAT_ID,
-      text: message,
-      parse_mode: 'HTML'
-    }));
+    req.write(body);
     req.end();
   });
 }
@@ -242,16 +244,7 @@ async function dailyReport() {
   console.log(`[${timestamp}] 일일 현황 보고 시작...`);
 
   try {
-    // 현재 상태 로드
-    const state = loadState();
-    const stateKeys = Object.keys(state);
-
-    if (stateKeys.length === 0) {
-      console.log('보고할 데이터가 없습니다.');
-      return;
-    }
-
-    // API 재조회해서 현재 최신 정보 획득
+    // API 조회해서 현재 최신 정보 획득
     const schedules = await fetchCGVSchedule();
     const currentSessions = extractIMAXSessions(schedules);
 
