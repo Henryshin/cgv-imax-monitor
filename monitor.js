@@ -31,6 +31,7 @@ const env = loadEnv();
 const BOT_TOKEN = env.TELEGRAM_BOT_TOKEN;
 const CHAT_ID = env.TELEGRAM_CHAT_ID;
 const SITE_NO = env.SITE_NO || '0013';
+const COMPANY_CD = env.COMPANY_CD || 'A420';
 const SCREEN_KEYWORD = env.SCREEN_KEYWORD || 'IMAX';
 const STATE_FILE = path.join(__dirname, 'state.json');
 
@@ -54,14 +55,15 @@ function saveState(state) {
   }
 }
 
-function fetchCGVSchedule() {
+function fetchCGVJson(cgvPath) {
   return new Promise((resolve, reject) => {
     const options = {
-      hostname: 'api.cgv.co.kr',
-      path: `/api/v1/theaters/${SITE_NO}/schedules?days=22`,
+      hostname: 'cgv.co.kr',
+      path: cgvPath,
       method: 'GET',
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+        'Accept': 'application/json'
       }
     };
 
@@ -88,37 +90,58 @@ function fetchCGVSchedule() {
   });
 }
 
-function extractIMAXSessions(schedules) {
-  const newSessions = [];
+function formatDate(scnYmd) {
+  return `${scnYmd.slice(0, 4)}-${scnYmd.slice(4, 6)}-${scnYmd.slice(6, 8)}`;
+}
 
-  if (!schedules || !schedules.data) {
-    return newSessions;
+function formatTime(hhmm) {
+  if (!hhmm || hhmm.length !== 4) return hhmm || '';
+  return `${hhmm.slice(0, 2)}:${hhmm.slice(2, 4)}`;
+}
+
+async function fetchScheduleDates() {
+  const result = await fetchCGVJson(
+    `/api/v1/booking/searchSiteScnscYmdListBySite?coCd=${COMPANY_CD}&siteNo=${SITE_NO}`
+  );
+  if (!result || result.statusCode !== 0 || !result.data) {
+    throw new Error(`날짜 목록 조회 실패: ${result && result.statusMessage}`);
+  }
+  return result.data.map(d => d.scnYmd);
+}
+
+async function fetchIMAXSessionsForDate(scnYmd) {
+  const result = await fetchCGVJson(
+    `/api/v1/booking/searchMovScnInfo?coCd=${COMPANY_CD}&siteNo=${SITE_NO}&scnYmd=${scnYmd}&rtctlScopCd=08`
+  );
+  if (!result || result.statusCode !== 0 || !result.data) {
+    return [];
   }
 
-  schedules.data.forEach(day => {
-    if (!day.screens) return;
+  return result.data
+    .filter(s => (s.scnsNm && s.scnsNm.includes(SCREEN_KEYWORD)) || (s.expoScnsNm && s.expoScnsNm.includes(SCREEN_KEYWORD)))
+    .map(s => ({
+      key: `${s.scnYmd}_${s.scnsNo}_${s.scnSseq}`,
+      date: formatDate(s.scnYmd),
+      screen: s.expoScnsNm || s.scnsNm,
+      movie: s.expoProdNm || s.movNm || 'Unknown',
+      startTime: formatTime(s.scnsrtTm),
+      endTime: formatTime(s.scnendTm),
+      availableSeats: parseInt(s.frSeatCnt, 10) || 0,
+      totalSeats: parseInt(s.cpSeatCnt, 10) || parseInt(s.stcnt, 10) || 0,
+      format: s.movkndDsplNm || ''
+    }));
+}
 
-    day.screens.forEach(screen => {
-      if (screen.screenName && screen.screenName.includes(SCREEN_KEYWORD)) {
-        screen.sessions.forEach(session => {
-          const key = `${day.date}_${screen.screenName}_${session.startTime}`;
-          newSessions.push({
-            key,
-            date: day.date,
-            screen: screen.screenName,
-            movie: session.movieName || 'Unknown',
-            startTime: session.startTime,
-            endTime: session.endTime,
-            availableSeats: session.availableSeats || 0,
-            totalSeats: session.totalSeats || 0,
-            format: screen.screenFormat || ''
-          });
-        });
-      }
-    });
-  });
+async function fetchAllIMAXSessions() {
+  const dates = await fetchScheduleDates();
+  const sessions = [];
 
-  return newSessions;
+  for (const scnYmd of dates) {
+    const daySessions = await fetchIMAXSessionsForDate(scnYmd);
+    sessions.push(...daySessions);
+  }
+
+  return sessions;
 }
 
 function sendTelegramMessage(message) {
@@ -178,8 +201,7 @@ async function checkAndNotify() {
 
   try {
     // 스케줄 조회
-    const schedules = await fetchCGVSchedule();
-    const currentSessions = extractIMAXSessions(schedules);
+    const currentSessions = await fetchAllIMAXSessions();
 
     if (currentSessions.length === 0) {
       console.log('현재 사용 가능한 IMAX 회차가 없습니다.');
@@ -245,8 +267,7 @@ async function dailyReport() {
 
   try {
     // API 조회해서 현재 최신 정보 획득
-    const schedules = await fetchCGVSchedule();
-    const currentSessions = extractIMAXSessions(schedules);
+    const currentSessions = await fetchAllIMAXSessions();
 
     if (currentSessions.length === 0) {
       const message = `📋 <b>[CGV 현황 보고] ${new Date().toLocaleDateString('ko-KR')}</b>\n\n현재 오픈 예매: 없음`;
