@@ -2,13 +2,16 @@
 
 CGV 용산아이파크몰 IMAX 관 예매 오픈을 자동으로 감지하고 **텔레그램**으로 실시간 알림을 받는 시스템입니다.
 
+> ⚠️ **로컬(Windows) 전용입니다.** CGV는 Cloudflare로 데이터센터/클라우드 IP(GitHub Actions 등)의 API 접근을 차단합니다.
+> 가정용 인터넷 IP에서만 정상 동작하므로, 이 프로젝트는 Windows 작업 스케줄러로 **PC가 켜져 있을 때** 실행됩니다.
+
 ## 📋 시스템 요구사항
 
-- **Windows 10/11** (로컬 실행) 또는 **GitHub Actions** (자동 클라우드 실행)
+- **Windows 10/11**
 - **Node.js 16 이상**
-- **인터넷 연결**
+- **인터넷 연결** (가정용 IP — VPN/프록시/클라우드 서버 불가)
 
-## 🚀 빠른 시작 (로컬 설정)
+## 🚀 빠른 시작
 
 ### 1단계 — 환경 설정
 
@@ -82,7 +85,14 @@ node test-telegram.js
 
 성공 시 텔레그램에 테스트 메시지가 옵니다.
 
-### 5단계 — 자동 실행 설정 (Windows)
+수동으로 모니터/보고를 한 번 실행해볼 수도 있습니다:
+
+```powershell
+node monitor.js          # 신규 회차 탐지
+node monitor.js report   # 현황 보고
+```
+
+### 5단계 — 자동 실행 설정 (Windows 작업 스케줄러)
 
 **관리자 권한** PowerShell에서:
 
@@ -90,35 +100,14 @@ node test-telegram.js
 powershell -ExecutionPolicy Bypass -File "C:\side_PJT\CGV\setup_task.ps1"
 ```
 
-작업 스케줄러가 5분마다 자동 실행하도록 등록됩니다.
+두 개의 예약 작업이 등록됩니다:
 
----
+| 작업 이름 | 주기 | 역할 |
+|-----------|------|------|
+| `CGV-IMAX-Monitor` | 5분마다 | 신규 회차 감지 시 알림 |
+| `CGV-IMAX-DailyReport` | 매일 09:00 | 현재 오픈된 예매 현황 요약 |
 
-## 🌐 클라우드 자동 실행 (GitHub Actions)
-
-GitHub에 repo를 만들면 5분마다 자동으로 모니터링합니다.
-
-### GitHub 업로드 방법
-
-1. **GitHub에서 새 repository 생성** (Public 또는 Private)
-
-2. **로컬에서 업로드**:
-   ```powershell
-   cd C:\side_PJT\CGV
-   git remote add origin https://github.com/YOUR_USERNAME/cgv-monitor.git
-   git branch -M main
-   git push -u origin main
-   ```
-
-3. **Secrets 설정** (GitHub Web):
-   - 저장소 Settings → Secrets and variables → Actions
-   - `TELEGRAM_BOT_TOKEN` 추가
-   - `TELEGRAM_CHAT_ID` 추가
-
-4. **Actions 활성화**:
-   - "Actions" 탭 → "I understand my workflows, go ahead and enable them"
-
-이제 자동으로 5분마다 모니터링하고 새로운 예약이 오픈되면 텔레그램으로 알림을 보냅니다!
+> PC가 꺼져 있거나 절전 상태면 실행되지 않습니다. 작업 스케줄러에서 언제든 확인/수정할 수 있습니다.
 
 ---
 
@@ -128,27 +117,27 @@ GitHub에 repo를 만들면 5분마다 자동으로 모니터링합니다.
 CGV/
 ├── monitor.js              # 메인 모니터링 스크립트
 ├── test-telegram.js        # 텔레그램 테스트
-├── setup_task.ps1          # Windows 스케줄러 등록
+├── setup_task.ps1          # Windows 스케줄러 등록 (모니터 + 일일보고)
 ├── package.json            # Node.js 메타데이터
-├── .env.example            # 환경변수 템플릿
-├── .env                    # 실제 환경변수 (git 제외)
-├── state.json              # 상태 저장 (자동 생성)
-├── .github/workflows/      
-│   └── monitor.yml         # GitHub Actions 설정
-├── README.md               # 이 파일
-└── .git/                   # Git 저장소
+├── .env.example             # 환경변수 템플릿
+├── .env                     # 실제 환경변수 (git 제외)
+├── state.json               # 상태 저장 (자동 생성)
+├── README.md                # 이 파일
+└── .git/                    # Git 저장소
 ```
 
 ## 🔍 동작 원리
 
-1. **API 조회**: CGV 공개 API에서 22일치 상영 일정 조회
-2. **필터링**: IMAX 상영관만 추출
-3. **신규 감지**: 이전 실행 대비 새 회차 감지
-4. **알림**: 신규 회차가 있으면 텔레그램 발송
-5. **상태**: `state.json`에 현재 회차 저장
+1. **날짜 목록 조회**: `cgv.co.kr/api/v1/booking/searchSiteScnscYmdListBySite`로 예매 가능한 날짜 목록 조회
+2. **일자별 스케줄 조회**: 각 날짜마다 `cgv.co.kr/api/v1/booking/searchMovScnInfo`로 전 상영관 스케줄 조회
+3. **필터링**: IMAX 상영관만 추출
+4. **신규 감지**: 이전 실행(`state.json`) 대비 새 회차 감지
+5. **알림**: 신규 회차가 있으면 텔레그램 발송, `state.json` 갱신
+6. **일일 보고**: 매일 09:00 현재 오픈된 전체 IMAX 예매 현황을 요약해서 발송
 
 ## 📊 텔레그램 알림 예시
 
+**신규 오픈 알림**
 ```
 [CGV] CGV 용산아이파크몰 IMAX 신규 예매 오픈 2건
 
@@ -163,14 +152,26 @@ CGV/
 CGV 예매 바로가기
 ```
 
+**일일 현황 보고 (매일 09:00)**
+```
+📋 [CGV 현황 보고] 2026.7.31
+현재 오픈 예매: 23건
+
+2026-07-31
+  14:00 스파이더맨-브랜드 뉴 데이
+  잔여 5/624석
+  ...
+```
+
 ## 🐛 문제 해결
 
 | 증상 | 해결 |
 |------|------|
 | "텔레그램 설정 누락" | `.env`에 토큰과 chat_id 입력 |
 | "chat not found" | chat_id 숫자 확인 또는 봇과 대화 시작 |
-| getUpdates가 빈 배열 | 내 봇 대화창에서 아무 메시지나 보내기 |
+| `JSON 파싱 오류: Unexpected token <` | CGV의 Cloudflare가 요청을 차단한 것. VPN/사내망이 아닌 일반 가정용 인터넷에서 실행 중인지 확인 |
 | 작업 스케줄러 등록 실패 | 관리자 권한으로 PowerShell 실행 |
+| PC를 꺼두면 알림이 안 옴 | 정상입니다. 이 프로젝트는 로컬 실행 전용입니다 (위 안내 참고) |
 
 ## 🚀 고급 설정
 
@@ -187,11 +188,10 @@ SCREEN_KEYWORD=ScreenX
 ```
 
 ### 체크 간격 변경
-```env
-CHECK_INTERVAL_MINUTES=3
-```
+작업 스케줄러 → `CGV-IMAX-Monitor` → 속성 → 트리거 편집
 
-작업 스케줄러에서도 조정 가능: 작업 스케줄러 → CGV-IMAX-Monitor → 속성 → 트리거 편집
+### 일일 보고 시간 변경
+작업 스케줄러 → `CGV-IMAX-DailyReport` → 속성 → 트리거 편집
 
 ## 📝 라이선스
 
@@ -199,4 +199,4 @@ MIT License
 
 ---
 
-**최신 업데이트**: 2026년 7월 30일
+**최신 업데이트**: 2026년 7월 31일
