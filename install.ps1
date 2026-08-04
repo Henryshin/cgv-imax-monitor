@@ -2,11 +2,11 @@
 # C:\side_PJT\CGV 에 설치 → .env 설정 → 텔레그램 테스트 → 스케줄러 등록 → 즉시 가동
 #
 # 사용법 (일반 PowerShell에서도 됨 — 관리자 창을 자동으로 띄웁니다):
-#   irm https://raw.githubusercontent.com/Henryshin/cgv-imax-monitor/claude/cgv-imax-monitor-olw5td/install.ps1 | iex
+#   irm https://raw.githubusercontent.com/Henryshin/cgv-imax-monitor/main/install.ps1 | iex
 
 $installDir = "C:\side_PJT\CGV"
 $repoUrl = "https://github.com/Henryshin/cgv-imax-monitor.git"
-$branch = "claude/cgv-imax-monitor-olw5td"
+$branch = "main"
 $rawUrl = "https://raw.githubusercontent.com/Henryshin/cgv-imax-monitor/$branch/install.ps1"
 
 function Wait-Exit($code) {
