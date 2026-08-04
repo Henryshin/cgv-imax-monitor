@@ -11,7 +11,23 @@ CGV 용산아이파크몰 IMAX 관 예매 오픈을 자동으로 감지하고 **
 - **Node.js 16 이상**
 - **인터넷 연결** (가정용 IP — VPN/프록시/클라우드 서버 불가)
 
-## 🚀 빠른 시작
+## ⚡ 원클릭 설치 (권장)
+
+**관리자 권한** PowerShell에서 한 줄 실행:
+
+```powershell
+irm https://raw.githubusercontent.com/Henryshin/cgv-imax-monitor/main/install.ps1 | iex
+```
+
+`C:\side_PJT\CGV`에 설치 → 텔레그램 토큰/chat_id 입력 → 연결 테스트 → 작업 스케줄러 등록 → 즉시 가동까지 자동으로 진행됩니다. 텔레그램 봇이 아직 없다면 아래 2단계의 BotFather 가이드를 먼저 따라 토큰과 chat_id를 준비해주세요.
+
+이미 저장소를 받아둔 경우:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File "C:\side_PJT\CGV\install.ps1"
+```
+
+## 🚀 수동 설치
 
 ### 1단계 — 환경 설정
 
