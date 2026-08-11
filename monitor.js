@@ -75,16 +75,28 @@ function saveState(state) {
   }
 }
 
+// 실제 브라우저와 최대한 비슷한 헤더를 보낸다.
+// Accept: application/json 만 보내면 CGV가 봇으로 판단해 HTML 차단 페이지를 준다.
+const BROWSER_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
+  'Accept': 'application/json, text/plain, */*',
+  'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
+  'Referer': 'https://cgv.co.kr/cnm/movieBook/ticket',
+  'Origin': 'https://cgv.co.kr',
+  'X-Requested-With': 'XMLHttpRequest',
+  'Sec-Fetch-Dest': 'empty',
+  'Sec-Fetch-Mode': 'cors',
+  'Sec-Fetch-Site': 'same-origin',
+  'Connection': 'keep-alive'
+};
+
 function fetchCGVJson(cgvPath) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'cgv.co.kr',
       path: cgvPath,
       method: 'GET',
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
-        'Accept': 'application/json'
-      }
+      headers: BROWSER_HEADERS
     };
 
     const req = https.request(options, (res) => {
@@ -95,17 +107,28 @@ function fetchCGVJson(cgvPath) {
       });
 
       res.on('end', () => {
+        // HTML이 오면 CGV가 차단했거나 엔드포인트가 바뀐 것 — 원인을 알 수 있게 상세히 남긴다.
+        const head = data.trim().slice(0, 200).replace(/\s+/g, ' ');
+        if (data.trim().startsWith('<')) {
+          reject(new Error(
+            `CGV가 JSON 대신 HTML을 반환했습니다 (HTTP ${res.statusCode}). ` +
+            `차단되었거나 API 주소가 변경되었을 수 있습니다.\n응답 앞부분: ${head}`
+          ));
+          return;
+        }
+
         try {
-          const parsed = JSON.parse(data);
-          resolve(parsed);
+          resolve(JSON.parse(data));
         } catch (error) {
-          reject(new Error('JSON 파싱 오류: ' + error.message));
+          reject(new Error(`JSON 파싱 오류 (HTTP ${res.statusCode}): ${error.message}\n응답 앞부분: ${head}`));
         }
       });
     });
 
     req.on('error', reject);
-    req.setTimeout(10000);
+    req.setTimeout(15000, () => {
+      req.destroy(new Error('CGV 응답 시간 초과 (15초)'));
+    });
     req.end();
   });
 }
@@ -251,6 +274,39 @@ async function sendLongTelegramMessage(message) {
   return results;
 }
 
+// 조회 실패가 조용히 묻히면 며칠씩 고장난 줄도 모르게 된다.
+// 실패하면 텔레그램으로 알리되, 5분마다 도배되지 않도록 6시간에 한 번만 보낸다.
+const ERROR_STATE_FILE = path.join(__dirname, 'error-state.json');
+const ERROR_NOTIFY_INTERVAL_MS = 6 * 60 * 60 * 1000;
+
+async function notifyFailure(context, error) {
+  let lastNotified = 0;
+  try {
+    if (fs.existsSync(ERROR_STATE_FILE)) {
+      lastNotified = JSON.parse(fs.readFileSync(ERROR_STATE_FILE, 'utf8')).lastNotified || 0;
+    }
+  } catch (e) { /* 무시 */ }
+
+  if (Date.now() - lastNotified < ERROR_NOTIFY_INTERVAL_MS) {
+    console.log('(실패 알림은 6시간에 한 번만 발송 — 이번엔 생략)');
+    return;
+  }
+
+  const message =
+    `⚠️ <b>[CGV 모니터 오류]</b>\n\n` +
+    `${escapeHtml(context)} 중 문제가 발생했습니다.\n\n` +
+    `<code>${escapeHtml(error.message)}</code>\n\n` +
+    `모니터는 계속 재시도합니다. 반복되면 확인이 필요합니다.`;
+
+  try {
+    await sendLongTelegramMessage(message);
+    fs.writeFileSync(ERROR_STATE_FILE, JSON.stringify({ lastNotified: Date.now() }), 'utf8');
+    console.log('✓ 오류 알림 발송 완료');
+  } catch (e) {
+    console.error('✗ 오류 알림 발송도 실패:', e.message);
+  }
+}
+
 async function checkAndNotify() {
   const timestamp = new Date().toLocaleString('ko-KR');
   console.log(`[${timestamp}] 모니터링 시작...`);
@@ -309,10 +365,7 @@ async function checkAndNotify() {
 
   } catch (error) {
     console.error('✗ 오류 발생:', error.message);
-    // 첫 실행 오류는 무시 (상태 파일이 없을 수 있음)
-    if (!fs.existsSync(STATE_FILE)) {
-      console.log('첫 실행 감지 - 기준선 설정 후 대기합니다.');
-    }
+    await notifyFailure('예매 정보 조회', error);
   }
 }
 
@@ -366,6 +419,7 @@ async function dailyReport() {
 
   } catch (error) {
     console.error('✗ 오류 발생:', error.message);
+    await notifyFailure('일일 현황 보고', error);
   }
 }
 
