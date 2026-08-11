@@ -75,28 +75,28 @@ function saveState(state) {
   }
 }
 
-// 실제 브라우저와 최대한 비슷한 헤더를 보낸다.
-// Accept: application/json 만 보내면 CGV가 봇으로 판단해 HTML 차단 페이지를 준다.
-const BROWSER_HEADERS = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36',
-  'Accept': 'application/json, text/plain, */*',
-  'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
-  'Referer': 'https://cgv.co.kr/cnm/movieBook/ticket',
-  'Origin': 'https://cgv.co.kr',
-  'X-Requested-With': 'XMLHttpRequest',
-  'Sec-Fetch-Dest': 'empty',
-  'Sec-Fetch-Mode': 'cors',
-  'Sec-Fetch-Site': 'same-origin',
-  'Connection': 'keep-alive'
+// 진단 결과, 이 최소 헤더 조합만 200 JSON을 받는다.
+// Origin / Sec-Fetch-* / X-Requested-With 등을 덧붙이면 CGV가 403 HTML로 차단한다.
+const CGV_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+  'Accept': 'application/json'
 };
 
-function fetchCGVJson(cgvPath) {
+// 요청을 몰아치면 CGV가 일시 차단하므로 호출 사이에 간격을 둔다.
+const REQUEST_DELAY_MS = 700;
+const MAX_RETRIES = 3;
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function fetchCGVJsonOnce(cgvPath) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'cgv.co.kr',
       path: cgvPath,
       method: 'GET',
-      headers: BROWSER_HEADERS
+      headers: CGV_HEADERS
     };
 
     const req = https.request(options, (res) => {
@@ -131,6 +131,26 @@ function fetchCGVJson(cgvPath) {
     });
     req.end();
   });
+}
+
+// 일시적 차단(403 HTML)은 잠시 기다렸다 다시 시도하면 대개 풀린다.
+async function fetchCGVJson(cgvPath) {
+  let lastError;
+
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await fetchCGVJsonOnce(cgvPath);
+    } catch (error) {
+      lastError = error;
+      if (attempt < MAX_RETRIES) {
+        const wait = 3000 * attempt; // 3초, 6초
+        console.log(`  재시도 ${attempt}/${MAX_RETRIES - 1} — ${wait / 1000}초 후 (${error.message.split('\n')[0]})`);
+        await sleep(wait);
+      }
+    }
+  }
+
+  throw lastError;
 }
 
 // 텔레그램 HTML parse_mode에서 &, <, > 가 포함된 영화 제목이 있으면
@@ -188,7 +208,9 @@ async function fetchAllIMAXSessions() {
   const dates = await fetchScheduleDates();
   const sessions = [];
 
+  // 날짜별 조회를 몰아치면 차단당하므로 사이에 간격을 둔다.
   for (const scnYmd of dates) {
+    await sleep(REQUEST_DELAY_MS);
     const daySessions = await fetchIMAXSessionsForDate(scnYmd);
     sessions.push(...daySessions);
   }
