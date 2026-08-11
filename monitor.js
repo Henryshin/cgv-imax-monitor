@@ -82,6 +82,10 @@ const CGV_HEADERS = {
   'Accept': 'application/json'
 };
 
+// 스케줄 조회(searchMovScnInfo)는 Referer가 없으면 403으로 막힌다.
+// 날짜 목록은 Referer 없이도 되므로 필요한 요청에만 붙인다.
+const BOOKING_REFERER = 'https://cgv.co.kr/cnm/movieBook/ticket';
+
 // 요청을 몰아치면 CGV가 일시 차단하므로 호출 사이에 간격을 둔다.
 const REQUEST_DELAY_MS = 1500;
 const MAX_RETRIES = 3;
@@ -92,13 +96,13 @@ function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-function fetchCGVJsonOnce(cgvPath) {
+function fetchCGVJsonOnce(cgvPath, extraHeaders) {
   return new Promise((resolve, reject) => {
     const options = {
       hostname: 'cgv.co.kr',
       path: cgvPath,
       method: 'GET',
-      headers: CGV_HEADERS
+      headers: { ...CGV_HEADERS, ...extraHeaders }
     };
 
     const req = https.request(options, (res) => {
@@ -136,12 +140,12 @@ function fetchCGVJsonOnce(cgvPath) {
 }
 
 // 일시적 차단(403 HTML)은 잠시 기다렸다 다시 시도하면 대개 풀린다.
-async function fetchCGVJson(cgvPath) {
+async function fetchCGVJson(cgvPath, extraHeaders) {
   let lastError;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
     try {
-      return await fetchCGVJsonOnce(cgvPath);
+      return await fetchCGVJsonOnce(cgvPath, extraHeaders);
     } catch (error) {
       lastError = error;
       if (attempt < MAX_RETRIES) {
@@ -185,7 +189,8 @@ async function fetchScheduleDates() {
 
 async function fetchIMAXSessionsForDate(scnYmd) {
   const result = await fetchCGVJson(
-    `/api/v1/booking/searchMovScnInfo?coCd=${COMPANY_CD}&siteNo=${SITE_NO}&scnYmd=${scnYmd}&rtctlScopCd=08`
+    `/api/v1/booking/searchMovScnInfo?coCd=${COMPANY_CD}&siteNo=${SITE_NO}&scnYmd=${scnYmd}&rtctlScopCd=08`,
+    { 'Referer': BOOKING_REFERER }
   );
   if (!result || result.statusCode !== 0 || !result.data) {
     return [];
