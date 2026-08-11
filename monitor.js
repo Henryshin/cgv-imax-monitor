@@ -83,8 +83,10 @@ const CGV_HEADERS = {
 };
 
 // 요청을 몰아치면 CGV가 일시 차단하므로 호출 사이에 간격을 둔다.
-const REQUEST_DELAY_MS = 700;
+const REQUEST_DELAY_MS = 1500;
 const MAX_RETRIES = 3;
+// 신규 날짜가 없어도 이 주기마다 한 번은 전체 날짜를 확인한다 (기존 날짜에 회차가 추가되는 경우 대비).
+const FULL_SCAN_INTERVAL_MS = 60 * 60 * 1000;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
@@ -334,21 +336,38 @@ async function checkAndNotify() {
   console.log(`[${timestamp}] 모니터링 시작...`);
 
   try {
-    // 스케줄 조회
-    const currentSessions = await fetchAllIMAXSessions();
+    const state = loadState();
+    const seenSessions = state.sessions || state;   // 구버전 state(평면 구조)도 그대로 인식
+    const seenDates = new Set(state.dates || []);
+    const lastFullScan = state.lastFullScan || 0;
 
-    if (currentSessions.length === 0) {
-      console.log('현재 사용 가능한 IMAX 회차가 없습니다.');
+    // ① 날짜 목록만 먼저 조회 (요청 1회).
+    //    예매 오픈은 "새 날짜가 열리는" 형태이므로 이것만으로 대부분 감지된다.
+    const dates = await fetchScheduleDates();
+    const newDates = dates.filter(d => !seenDates.has(d));
+
+    // ② 새 날짜가 있으면 그 날짜만, 아니면 1시간에 한 번만 전체를 훑는다.
+    //    (매번 전 날짜를 조회하면 요청량이 과도해 CGV가 IP를 차단한다)
+    const needFullScan = Date.now() - lastFullScan > FULL_SCAN_INTERVAL_MS;
+    const datesToFetch = newDates.length > 0
+      ? [...new Set([...newDates, ...(needFullScan ? dates : [])])]
+      : (needFullScan ? dates : []);
+
+    if (datesToFetch.length === 0) {
+      console.log(`신규 날짜 없음 (전체 ${dates.length}일) — 요청 1회로 종료`);
       return;
     }
 
-    // 상태 로드
-    const state = loadState();
-    const seenKeys = new Set(Object.keys(state));
-    const newKeys = new Set(currentSessions.map(s => s.key));
+    console.log(`조회 대상 ${datesToFetch.length}일${newDates.length ? ` (신규 날짜 ${newDates.length}일)` : ' (정기 전체 확인)'}`);
+
+    const currentSessions = [];
+    for (const scnYmd of datesToFetch.sort()) {
+      await sleep(REQUEST_DELAY_MS);
+      currentSessions.push(...await fetchIMAXSessionsForDate(scnYmd));
+    }
 
     // 신규 회차 감지
-    const newSessions = currentSessions.filter(s => !seenKeys.has(s.key));
+    const newSessions = currentSessions.filter(s => !seenSessions[s.key]);
 
     if (newSessions.length > 0) {
       console.log(`\n📢 신규 회차 ${newSessions.length}개 감지!`);
@@ -378,12 +397,17 @@ async function checkAndNotify() {
       console.log('신규 회차 없음 (기존 회차만 존재)');
     }
 
-    // 상태 업데이트 (현재 회차를 기준선으로)
-    const newState = {};
+    // 상태 업데이트 — 이번에 조회하지 않은 날짜의 기록도 보존해야 하므로 병합한다.
+    const mergedSessions = { ...seenSessions };
     currentSessions.forEach(session => {
-      newState[session.key] = true;
+      mergedSessions[session.key] = true;
     });
-    saveState(newState);
+
+    saveState({
+      sessions: mergedSessions,
+      dates,
+      lastFullScan: needFullScan ? Date.now() : lastFullScan
+    });
 
   } catch (error) {
     console.error('✗ 오류 발생:', error.message);
