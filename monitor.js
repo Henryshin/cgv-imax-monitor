@@ -1,6 +1,7 @@
 const https = require('https');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 // Load .env file manually (no external dependencies)
 function loadEnv() {
@@ -420,6 +421,22 @@ async function checkAndNotify() {
   }
 }
 
+// 5분 모니터 작업이 조용히 사라진 적이 있어(트리거 만료), 매일 보고에 상태를 함께 싣는다.
+// 보고는 오는데 신규 알림만 안 오는 상황을 바로 알아챌 수 있게 하기 위함이다.
+function monitorTaskStatus() {
+  try {
+    const out = require('child_process')
+      .execSync('schtasks /query /tn "CGV-IMAX-Monitor" /fo LIST', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    const nextRun = (out.split('\n').find(l => /다음 실행 시간|Next Run Time/.test(l)) || '').split(':').slice(1).join(':').trim();
+    if (!nextRun || /N\/A|해당 없음/.test(nextRun)) {
+      return `⚠️ 5분 모니터: 다음 실행 예정 없음 — 재등록 필요 (${escapeHtml(nextRun || '없음')})`;
+    }
+    return `🟢 5분 모니터 정상 (다음 실행 ${escapeHtml(nextRun)}) · ${escapeHtml(os.hostname())}`;
+  } catch (e) {
+    return `⚠️ 5분 모니터 작업이 등록되어 있지 않습니다 — setup_task.ps1 재실행 필요 (${escapeHtml(os.hostname())})`;
+  }
+}
+
 async function dailyReport() {
   const timestamp = new Date().toLocaleString('ko-KR');
   console.log(`[${timestamp}] 일일 현황 보고 시작...`);
@@ -446,7 +463,8 @@ async function dailyReport() {
 
     // 메시지 구성
     let message = `📋 <b>[CGV 현황 보고] ${new Date().toLocaleDateString('ko-KR')}</b>\n`;
-    message += `현재 오픈 예매: ${currentSessions.length}건\n\n`;
+    message += `현재 오픈 예매: ${currentSessions.length}건\n`;
+    message += `${monitorTaskStatus()}\n\n`;
 
     // 날짜순으로 정렬 — 전체 날짜/회차 포함 (길면 여러 메시지로 분할 전송)
     const sortedDates = Object.keys(sessionsByDate).sort();
